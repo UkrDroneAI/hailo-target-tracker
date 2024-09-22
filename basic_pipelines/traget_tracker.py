@@ -10,6 +10,8 @@ import cv2
 import time
 import hailo
 import supervision as sv
+from pymavlink import mavutil
+from pymavlink_common import wait_heartbeat, auto_connect
 from hailo_rpi_common import (
     get_default_parser,
     QUEUE,
@@ -23,13 +25,13 @@ from hailo_rpi_common import (
 # User-defined class to be used in the callback function
 # -----------------------------------------------------------------------------------------------
 # Inheritance from the app_callback_class
-# class user_app_callback_class(app_callback_class):
-#     def __init__(self):
-#         super().__init__()
-#         self.new_variable = 42  # New variable example
+class user_app_callback_class(app_callback_class):
+    def __init__(self):
+        super().__init__()
+        self.new_variable = 42  # New variable example
 
-#     def new_function(self):  # New function example
-#         return "The meaning of life is: "
+    def new_function(self):  # New function example
+        return "The meaning of life is: "
 
 # -----------------------------------------------------------------------------------------------
 # User-defined callback function
@@ -43,47 +45,35 @@ def app_callback(pad, info, user_data):
     if buffer is None:
         return Gst.PadProbeReturn.OK
 
-    
-    
-    
-    # Using the user_data to count the number of frames
-    user_data.increment()
-    string_to_print = f"Frame count: {user_data.get_count()}\n"
-
-    # Get the caps from the pad
-    format, width, height = get_caps_from_pad(pad)
-
-    # If the user_data.use_frame is set to True, we can get the video frame from the buffer
-    frame = None
-    if user_data.use_frame and format is not None and width is not None and height is not None:
-        # Get video frame
-        frame = get_numpy_from_buffer(buffer, format, width, height)
-
     # Get the detections from the buffer
     roi = hailo.get_roi_from_buffer(buffer)
-    detections = roi.get_objects_typed(hailo.HAILO_DETECTION)
+    hailo_detections = roi.get_objects_typed(hailo.HAILO_DETECTION)
+    n = len(hailo_detections)
+    
+    
+    # Get the caps from the pad
+    _, w, h = get_caps_from_pad(pad)
 
-    # Parse the detections
-    detection_count = 0
-    for detection in detections:
-        label = detection.get_label()
+
+    boxes = np.zeros((n, 4))
+    confidence = np.zeros(n)
+    class_id = np.zeros(n)
+    tracker_id = np.empty(n)
+
+    for i, detection in enumerate(hailo_detections):
+        class_id[i] = detection.get_class_id()
+        confidence[i] = detection.get_confidence()
+        tracker_id[i] = detection.get_objects_typed(hailo.HAILO_UNIQUE_ID)[0].get_id()
         bbox = detection.get_bbox()
-        confidence = detection.get_confidence()
-        if label == "person":
-            string_to_print += f"Detection: {label} {confidence:.2f}\n"
-            detection_count += 1
-    if user_data.use_frame:
-        # Note: using imshow will not work here, as the callback function is not running in the main thread
-        # Let's print the detection count to the frame
-        cv2.putText(frame, f"Detections: {detection_count}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        # Example of how to use the new_variable and new_function from the user_data
-        # Let's print the new_variable and the result of the new_function to the frame
-        cv2.putText(frame, f"{user_data.new_function()} {user_data.new_variable}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        # Convert the frame to BGR
-        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        user_data.set_frame(frame)
+        boxes[i] = [bbox.xmin() * w, bbox.ymin() * h, bbox.xmax() * w, bbox.ymax() * h]
+    
+    detections = sv.Detections(
+            xyxy=boxes, 
+            confidence=confidence, 
+            class_id=class_id,
+            tracker_id=tracker_id)
 
-    print(string_to_print)
+    #print(tracker_id, confidence, boxes)
     return Gst.PadProbeReturn.OK
 
 
@@ -141,12 +131,21 @@ class GStreamerDetectionApp(GStreamerApp):
 
         # Set the process title
         setproctitle.setproctitle("Hailo Detection App")
+        
+        # create a mavlink serial instance
+        comport = auto_connect(args.device)
+        self.master = mavutil.mavlink_connection(comport.device, baud=args.baudrate, source_system=args.source_system)
+
+        # wait for the heartbeat msg to find the system ID
+        wait_heartbeat(self.master)
 
         self.create_pipeline()
 
     def get_pipeline_string(self):
         if self.source_type == "rpi":
             source_element = (
+                # "libcamerasrc name=src_0 auto-focus-mode=AfModeManual ! "
+                # "libcamerasrc name=src_0 auto-focus-mode=2 ! "
                 "libcamerasrc name=src_0 ! "
                 f"video/x-raw, format={self.network_format}, width=1536, height=864 ! "
                 + QUEUE("queue_src_scale")
@@ -183,6 +182,8 @@ class GStreamerDetectionApp(GStreamerApp):
             f"hailonet hef-path={self.hef_path} batch-size={self.batch_size} {self.thresholds_str} force-writable=true ! "
             + QUEUE("queue_hailofilter")
             + f"hailofilter so-path={self.default_postprocess_so} {self.labels_config} qos=false ! "
+            + QUEUE("queue_hailotracker")
+            + "hailotracker keep-tracked-frames=3 keep-new-frames=3 keep-lost-frames=3 ! "
             + QUEUE("queue_hmuc")
             + "hmux.sink_1 "
             + "hmux. ! "

@@ -122,18 +122,38 @@ Additional documentation and [tutorials](https://hailo.ai/developer-zone/documen
 For a full end-to-end training and deployment example, see the [Retraining Example](doc/retraining-example.md).
 The detection basic pipeline example includes support for retrained models. For more information, see [Using Retrained Models](doc/basic-pipelines.md#using-retrained-models).
 
-## Contributing
+## Launching SITL
 
-We welcome contributions from the community. You can contribute by:
-1. Opening a pull request.
-2. Reporting issues and bugs.
-3. Suggesting new features or improvements.
-4. Joining the discussion on the [Hailo Community Forum](https://community.hailo.ai/).
+1) To launch the SITL run the next command
 
-## License
+```bash
+python sim_vehicle.py -v ArduPlane -f plane --map --console --osd
+```
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+2) Add a connection to the companion computer using SITL CLI:
 
-## Disclaimer
+```
+output add 192.168.1.34:14550
+```
 
-This code example is provided by Hailo solely on an “AS IS” basis and “with all faults.” No responsibility or liability is accepted or shall be imposed upon Hailo regarding the accuracy, merchantability, completeness, or suitability of the code example. Hailo shall not have any liability or responsibility for errors or omissions in, or any business decisions made by you in reliance on this code example or any part of it. If an error occurs when running this example, please open a ticket in the "Issues" tab.
+3) Take off a sim plane using SITL CLI:
+
+```
+MANUAL> loiter
+MANUAL> arm throttle
+LOITER> LOITER> 
+LOITER> rc 3 1700
+LOITER> circle
+```
+
+4) Switch the mode to GUIDED using SITL CLI:
+
+```
+CIRCLE> GUIDED
+```
+
+5) Run target_tracker:
+
+```
+python basic_pipelines/target_tracker.py -i data/car_chasing_720p.mp4 --ardu_device udp:192.168.1.34:14550
+```

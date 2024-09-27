@@ -1,17 +1,3 @@
-import gi
-gi.require_version('Gst', '1.0')
-from gi.repository import Gst, GLib
-import os
-import argparse
-import multiprocessing
-import numpy as np
-import setproctitle
-import cv2
-import time
-import hailo
-import supervision as sv
-from pymavlink import mavutil
-from pymavlink_common import wait_heartbeat, auto_connect
 from hailo_rpi_common import (
     get_default_parser,
     QUEUE,
@@ -20,11 +6,31 @@ from hailo_rpi_common import (
     GStreamerApp,
     app_callback_class,
 )
+from pymavlink_common import wait_heartbeat, auto_connect
+import supervision as sv
+import hailo
+import time
+import cv2
+import setproctitle
+import numpy as np
+import multiprocessing
+import argparse
+import os
+from gi.repository import Gst, GLib
+import gi
+
+from autopilot_companion import AutipilotCompanion
+gi.require_version('Gst', '1.0')
+
+
+ac = AutipilotCompanion()
 
 # -----------------------------------------------------------------------------------------------
 # User-defined class to be used in the callback function
 # -----------------------------------------------------------------------------------------------
 # Inheritance from the app_callback_class
+
+
 class user_app_callback_class(app_callback_class):
     def __init__(self):
         super().__init__()
@@ -38,6 +44,8 @@ class user_app_callback_class(app_callback_class):
 # -----------------------------------------------------------------------------------------------
 
 # This is the callback function that will be called when data is available from the pipeline
+
+
 def app_callback(pad, info, user_data):
     # Get the GstBuffer from the probe info
     buffer = info.get_buffer()
@@ -49,31 +57,57 @@ def app_callback(pad, info, user_data):
     roi = hailo.get_roi_from_buffer(buffer)
     hailo_detections = roi.get_objects_typed(hailo.HAILO_DETECTION)
     n = len(hailo_detections)
-    
-    
+
     # Get the caps from the pad
     _, w, h = get_caps_from_pad(pad)
 
-
-    boxes = np.zeros((n, 4))
-    confidence = np.zeros(n)
-    class_id = np.zeros(n)
-    tracker_id = np.empty(n)
+    boxes_dict = {}
+    confidence_dict = {}
+    class_id_dict = {}
 
     for i, detection in enumerate(hailo_detections):
-        class_id[i] = detection.get_class_id()
-        confidence[i] = detection.get_confidence()
-        tracker_id[i] = detection.get_objects_typed(hailo.HAILO_UNIQUE_ID)[0].get_id()
-        bbox = detection.get_bbox()
-        boxes[i] = [bbox.xmin() * w, bbox.ymin() * h, bbox.xmax() * w, bbox.ymax() * h]
-    
-    detections = sv.Detections(
-            xyxy=boxes, 
-            confidence=confidence, 
-            class_id=class_id,
-            tracker_id=tracker_id)
 
-    #print(tracker_id, confidence, boxes)
+        tracker_id = detection.get_objects_typed(
+            hailo.HAILO_UNIQUE_ID)[0].get_id()
+        
+        class_id_dict[tracker_id] = detection.get_class_id()
+        confidence_dict[tracker_id] = detection.get_confidence()
+        bbox = detection.get_bbox()
+        boxes_dict[tracker_id] = [
+            bbox.xmin(), bbox.ymin(), bbox.xmax(), bbox.ymax()]
+
+    
+    ac.process_frame(
+        class_ids=class_id_dict,
+        confidences=confidence_dict,
+        boxes=boxes_dict,
+        frame_size=(w,h)
+    )
+    
+    # if confidence.size != 0:
+    #     most_confident_target_id = confidence.argmax()
+    #     if ac.target_id_locked not in tracker_id:
+    #         print("The target has been lost")
+    #         # TODO implement lost status processing
+    #         ac.lock_target(tracker_id[most_confident_target_id])
+    #         print(
+    #             f"Locked:  target {tracker_id[most_confident_target_id]}, type {class_id[most_confident_target_id]} with confidence {confidence[most_confident_target_id]}")
+            
+            
+            
+    # mode = ac.get_flight_mode()
+    # if mode:
+    #     print(mode)
+    #     if mode == ac.tracking_mode:
+            # print("Tracking.....")
+
+    # detections = sv.Detections(
+    #         xyxy=boxes,
+    #         confidence=confidence,
+    #         class_id=class_id,
+    #         tracker_id=tracker_id)
+
+    # print(tracker_id, confidence, boxes)
     return Gst.PadProbeReturn.OK
 
 
@@ -97,21 +131,26 @@ class GStreamerDetectionApp(GStreamerApp):
 
         # Temporary code: new postprocess will be merged to TAPPAS.
         # Check if new postprocess so file exists
-        new_postprocess_path = os.path.join(self.current_path, '../resources/libyolo_hailortpp_post.so')
+        new_postprocess_path = os.path.join(
+            self.current_path, '../resources/libyolo_hailortpp_post.so')
         if os.path.exists(new_postprocess_path):
             self.default_postprocess_so = new_postprocess_path
         else:
-            self.default_postprocess_so = os.path.join(self.postprocess_dir, 'libyolo_hailortpp_post.so')
+            self.default_postprocess_so = os.path.join(
+                self.postprocess_dir, 'libyolo_hailortpp_post.so')
 
         if args.hef_path is not None:
             self.hef_path = args.hef_path
         # Set the HEF file path based on the network
         elif args.network == "yolov6n":
-            self.hef_path = os.path.join(self.current_path, '../resources/yolov6n.hef')
+            self.hef_path = os.path.join(
+                self.current_path, '../resources/yolov6n.hef')
         elif args.network == "yolov8s":
-            self.hef_path = os.path.join(self.current_path, '../resources/yolov8s_h8l.hef')
+            self.hef_path = os.path.join(
+                self.current_path, '../resources/yolov8s_h8l.hef')
         elif args.network == "yolox_s_leaky":
-            self.hef_path = os.path.join(self.current_path, '../resources/yolox_s_leaky_h8l_mz.hef')
+            self.hef_path = os.path.join(
+                self.current_path, '../resources/yolox_s_leaky_h8l_mz.hef')
         else:
             assert False, "Invalid network type"
 
@@ -131,13 +170,13 @@ class GStreamerDetectionApp(GStreamerApp):
 
         # Set the process title
         setproctitle.setproctitle("Hailo Detection App")
-        
-        # create a mavlink serial instance
-        comport = auto_connect(args.device)
-        self.master = mavutil.mavlink_connection(comport.device, baud=args.baudrate, source_system=args.source_system)
 
-        # wait for the heartbeat msg to find the system ID
-        wait_heartbeat(self.master)
+        # create a mavlink serial instance
+        # comport = auto_connect(args.device)
+        # self.master = mavutil.mavlink_connection(comport.device, baud=args.baudrate, source_system=args.source_system)
+
+        # # wait for the heartbeat msg to find the system ID
+        # wait_heartbeat(self.master)
 
         self.create_pipeline()
 
@@ -200,6 +239,7 @@ class GStreamerDetectionApp(GStreamerApp):
         print(pipeline_string)
         return pipeline_string
 
+
 if __name__ == "__main__":
     # Create an instance of the user app callback class
     user_data = user_app_callback_class()
@@ -221,6 +261,47 @@ if __name__ == "__main__":
         default=None,
         help="Path to costume labels JSON file",
     )
+    parser.add_argument(
+        "--ardu_device",
+        required=True,
+        help="serial device",
+    )
+    parser.add_argument(
+        "--baudrate",
+        type=int,
+        help="master port baud rate", default=115200
+    )
+    parser.add_argument(
+        "--source-system",
+        dest='SOURCE_SYSTEM',
+        type=int,
+        default=255,
+        help='MAVLink source system for this GCS'
+    )
+    parser.add_argument(
+        "--tracking_mode",
+        help="Autopilot mode when a target is tracked", default="GUIDED"
+    )
+
+    parser.add_argument(
+        "--allowed_objects",
+        type=str,
+        help="Semicolon separated list of allowed objects, e.g. \"Armored;Cannon\"", default="Armored;Cannon"
+    )
+    parser.add_argument(
+        "--min_confidence",
+        type=float,
+        help="Min confidence to lock", default=0.5
+    )
+
     args = parser.parse_args()
     app = GStreamerDetectionApp(args, user_data)
+    ac.configure(
+        device=args.ardu_device,
+        baudrate=args.baudrate,
+        SOURCE_SYSTEM=args.SOURCE_SYSTEM,
+        tracking_mode=args.tracking_mode,
+        allowed_objects=args.allowed_objects,
+        min_confidence=args.min_confidence
+    )
     app.run()

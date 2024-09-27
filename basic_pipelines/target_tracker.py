@@ -77,11 +77,11 @@ def app_callback(pad, info, user_data):
             bbox.xmin(), bbox.ymin(), bbox.xmax(), bbox.ymax()]
 
     
-    ac.process_frame(
+    ac.process_video_frame(
         class_ids=class_id_dict,
         confidences=confidence_dict,
         boxes=boxes_dict,
-        frame_size=(w,h)
+        video_frame_size=(w,h)
     )
     
     # if confidence.size != 0:

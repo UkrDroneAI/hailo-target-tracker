@@ -2,6 +2,9 @@ from pymavlink import mavutil
 import time
 import math
 from pymavlink import quaternion
+import os
+import ctypes as ct
+
 
 def wait_heartbeat(m):
     '''wait for a heartbeat so we know the target system IDs'''
@@ -11,11 +14,19 @@ def wait_heartbeat(m):
           (m.target_system, m.target_component))
 
 
+class AngularControl(ct.Structure):
+    _fields_ = [
+        ("control_output_x", ct.c_float),
+        ("control_output_y", ct.c_float),
+        ("control_output_z", ct.c_float),
+    ]
+
+
 class AutipilotCompanion:
-    
+
     state_wait = "wait"
     state_hold = "hold"
-    
+
     typemask_ypr_throttle = 0b00111000
     type_mask_ypr = 0b01111000
 
@@ -24,13 +35,57 @@ class AutipilotCompanion:
         self.target_id_locked = -1
         self.boot_time = time.time()
 
-    def configure(self, device, baudrate=115200, SOURCE_SYSTEM=255, tracking_mode="GUIDED", allowed_objects="Armored;Cannon", min_confidence=0.5):
+    def close(self):
+
+        print("Closing the vehicle...")
+        cac_handle = self.cac._handle
+        del self.cac
+        self._dlclose_func(cac_handle)
+        self.master.close()
+
+    def configure(self, 
+                device, 
+                baudrate=115200, 
+                SOURCE_SYSTEM=255, 
+                tracking_mode="GUIDED", 
+                tracked_objects="Armored;Cannon", 
+                min_confidence=0.5, 
+                angularcs_lib_path="resources/angularcs.so",
+                horizontal_fov=60,
+                vertical_fov=60,
+                timesample=0.1
+        ):
 
         self.tracking_mode = tracking_mode
-        # self.allowed_objects = allowed_objects
-        
-
         self.min_confidence = min_confidence
+        self.tracked_objects = tracked_objects
+        self.horizontal_fov = horizontal_fov
+        self.vertical_fov = vertical_fov
+        self.timesample = timesample
+        
+        self.angularcs_lib_path = os.path.join(os.getcwd(), angularcs_lib_path)
+
+        if not os.path.exists(self.angularcs_lib_path):
+            raise FileNotFoundError(
+                f"Angularcs lib not found: {self.angularcs_lib_path}")
+
+        print(f"Loading shared lib: {self.angularcs_lib_path}")
+
+        self.cac = ct.CDLL(self.angularcs_lib_path)
+        self.cac.control_angular_motion_ex.argtypes = [
+            ct.c_float,
+            ct.c_float,
+            ct.c_float,
+            ct.c_float,
+            ct.c_uint32,
+            ct.c_uint32,
+            ct.c_uint32,
+            ct.c_uint32,
+        ]
+        self.cac.control_angular_motion_ex.restype = AngularControl
+
+        self._dlclose_func = ct.cdll.LoadLibrary('').dlclose
+        self._dlclose_func.argtypes = [ct.c_void_p]
 
         self.master = mavutil.mavlink_connection(
             device, baud=baudrate, source_system=SOURCE_SYSTEM)
@@ -99,10 +154,12 @@ class AutipilotCompanion:
             target_xy_bias = self.xy_bias(
                 tuple((float(i) for i in boxes[self.target_id_locked])))
             print(target_xy_bias)
-            
-            #TODO calculate angles here
+
+            # TODO calculate angles here
             velocities = self.visual_pid_wrapper(
-                target_xy_bias[0], target_xy_bias[1])
+                target_xy_bias[0], target_xy_bias[1])       
+            
+            
             print(velocities)
             self.__set_attitude_target(
                 velocities['roll'], velocities['pitch'], velocities['yaw'], velocities['throttle'])
@@ -125,34 +182,74 @@ class AutipilotCompanion:
             'throttle': 0
         }
         
-        # Dummy calculation for testing 
-        velocities['roll'] = -90 * x_bias
-        velocities['yaw'] = -45 * x_bias
+        pid_velocities = self.__calculate_velocities(
+            x_bias, y_bias)
+
+        # Dummy calculation for testing
+        # velocities['roll'] = -90 * x_bias
+        # velocities['yaw'] = -45 * x_bias
+        
+        velocities['yaw'] = pid_velocities[0]
+        velocities['pitch'] = pid_velocities[1]
+        
 
         return velocities
 
     def __set_attitude_target(self, roll, pitch, yaw, throttle=0, tolerance=10):
 
-        
-        try:    
+        try:
             m = self.master.recv_match(type='ATTITUDE',
-                                    blocking=True,
-                                    timeout=0.1)
+                                       blocking=True,
+                                       timeout=0.1)
             if m is None:
                 return
 
             # attitude in radians:
             q = quaternion.Quaternion([math.radians(roll),
-                                        math.radians(pitch),
-                                        math.radians(yaw)])
+                                       math.radians(pitch),
+                                       math.radians(yaw)])
             self.master.mav.set_attitude_target_send(int(1e3 * (time.time() - self.boot_time)),
-                                                    self.master.target_system,
-                                                    self.master.target_component,
-                                                    self.typemask_ypr_throttle,
-                                                    q,
-                                                    0,  # roll rate, not used in AP
-                                                    0,  # pitch rate, not used in AP
-                                                    0,  # yaw rate, not used in AP
-                                                    throttle)
+                                                     self.master.target_system,
+                                                     self.master.target_component,
+                                                     self.typemask_ypr_throttle,
+                                                     q,
+                                                     0,  # roll rate, not used in AP
+                                                     0,  # pitch rate, not used in AP
+                                                     0,  # yaw rate, not used in AP
+                                                     throttle)
         except Exception as e:
-            print(f"Error setting attitude: \n   - roll: {roll}\n   - pitch: {pitch}\n   - yaw: {yaw}\n   - throttle: {throttle} \n {e}")
+            print(
+                f"Error setting attitude: \n   - roll: {roll}\n   - pitch: {pitch}\n   - yaw: {yaw}\n   - throttle: {throttle} \n {e}")
+
+    def __calculate_velocities(self, erx: float, ery: float, erz=0.0, w=1, h=1) -> tuple:
+        """Calculates required velocities among x, y, z axis
+
+        Args:
+            erx (int): target direction error among x
+            ery (int): target direction error among y
+            ery (int): target direction error among z
+
+        Returns:
+            tuple: tuple of required velocities among x, y, z axis (velocity_x, velocity_y, velocity_z)
+        """
+
+        try:
+
+            velocity = self.cac.control_angular_motion_ex(
+                float(erx),
+                float(ery),
+                float(erz),
+                self.timesample,
+                w,
+                h,
+                self.horizontal_fov,
+                self.vertical_fov,
+            )
+            return (
+                velocity.control_output_x,
+                velocity.control_output_y,
+                velocity.control_output_z,
+            )
+        except Exception as er:
+            print(f"Error calling shared lib: {er}")
+            return 0, 0, 0

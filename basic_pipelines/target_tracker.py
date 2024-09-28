@@ -284,7 +284,7 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--allowed_objects",
+        "--tracked_objects",
         type=str,
         help="Semicolon separated list of allowed objects, e.g. \"Armored;Cannon\"", default="Armored;Cannon"
     )
@@ -293,6 +293,18 @@ if __name__ == "__main__":
         type=float,
         help="Min confidence to lock", default=0.5
     )
+    parser.add_argument(
+        "--horizontal_fov",
+        type=float,
+        help="Camera horizontal FoV", default=60.0
+    )
+    parser.add_argument(
+        "--vertical_fov",
+        type=float,
+        help="Camera vertical FoV", default=60.0
+    )
+    
+    
 
     args = parser.parse_args()
     app = GStreamerDetectionApp(args, user_data)
@@ -301,7 +313,7 @@ if __name__ == "__main__":
         baudrate=args.baudrate,
         SOURCE_SYSTEM=args.SOURCE_SYSTEM,
         tracking_mode=args.tracking_mode,
-        allowed_objects=args.allowed_objects,
+        tracked_objects=args.tracked_objects,
         min_confidence=args.min_confidence
     )
     app.run()

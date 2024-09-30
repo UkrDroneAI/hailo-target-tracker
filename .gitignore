@@ -158,6 +158,4 @@ cython_debug/
 
 # hailo-rpi5-examples specific
 venv_hailo_rpi5_examples/*
-resources/*.mp4
-resources/*.hef
-resources/*.so
+

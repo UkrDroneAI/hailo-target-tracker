@@ -1,0 +1,3 @@
+[submodule "controlsystem"]
+	path = controlsystem
+	url = https://github.com/UkrDroneAI/controlsystem.git

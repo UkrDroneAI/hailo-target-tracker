@@ -1,0 +1,11 @@
+{
+  "iou_threshold": 0.45,
+  "detection_threshold": 0.5,
+  "max_boxes":200,
+  "labels": [
+    "Cannon",
+    "Vehicle",
+    "Armored",
+    "Aircraft Defence"
+  ]
+}

@@ -106,7 +106,7 @@ class GStreamerDetectionApp(GStreamerApp):
         # Temporary code: new postprocess will be merged to TAPPAS.
         # Check if new postprocess so file exists
         new_postprocess_path = os.path.join(
-            self.current_path, '/home/naveen/hailo-rpi5-examples/resources/libyolo_hailortpp_post.so')
+            self.current_path, '../resources/libyolo_hailortpp_post.so')
         if os.path.exists(new_postprocess_path):
             self.default_postprocess_so = new_postprocess_path
         else:

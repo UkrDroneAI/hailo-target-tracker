@@ -43,26 +43,30 @@ class AutipilotCompanion:
         self._dlclose_func(cac_handle)
         self.master.close()
 
-    def configure(self, 
-                device, 
-                baudrate=115200, 
-                SOURCE_SYSTEM=255, 
-                tracking_mode="GUIDED", 
-                tracked_objects="Armored;Cannon", 
-                min_confidence=0.5, 
-                angularcs_lib_path="resources/angularcs.so",
-                horizontal_fov=60,
-                vertical_fov=60,
-                timesample=0.1
-        ):
+    def configure(self,
+                  device,
+                  baudrate=115200,
+                  SOURCE_SYSTEM=255,
+                  tracking_mode="GUIDED",
+                  tracked_objects="Armored;Cannon",
+                  min_confidence=0.5,
+                  angularcs_lib_path="resources/angularcs.so",
+                  horizontal_fov=60,
+                  vertical_fov=60,
+                  horizontal_frame_size=640,
+                  vertical_frame_size=640,
+                  timesample=0.1
+                  ):
 
         self.tracking_mode = tracking_mode
         self.min_confidence = min_confidence
         self.tracked_objects = tracked_objects
         self.horizontal_fov = horizontal_fov
         self.vertical_fov = vertical_fov
+        self.horizontal_frame_size = horizontal_frame_size
+        self.vertical_frame_size = vertical_frame_size
         self.timesample = timesample
-        
+
         self.angularcs_lib_path = os.path.join(os.getcwd(), angularcs_lib_path)
 
         if not os.path.exists(self.angularcs_lib_path):
@@ -150,16 +154,19 @@ class AutipilotCompanion:
         """
         # checking if the locked object id in the current detections
         if self.target_id_locked in class_ids.keys():
-            
-            # calculating x, y bias 
-            target_xy_bias = self.xy_bias(
-                tuple((float(i) for i in boxes[self.target_id_locked])))
+
+            # calculating x, y bias
+
+            target_xyxy_box = tuple((float(i)
+                                    for i in boxes[self.target_id_locked]))
+
+            target_xy_bias = self.xy_bias(target_xyxy_box, self.horizontal_frame_size, self.vertical_frame_size)
             print(f"Bias xy: {target_xy_bias}")
 
             # calculating angles in radians
             velocities = self.visual_pid_wrapper(
-                target_xy_bias[0], target_xy_bias[1])    
-            
+                target_xy_bias[0], target_xy_bias[1])
+
             print(f"Velocities yaw, pitch, roll: {velocities}")
 
             # set flight angles
@@ -176,7 +183,20 @@ class AutipilotCompanion:
 
     @staticmethod
     def xy_bias(bbox_xyxy: tuple[float, float, float, float], w=1.0, h=1.0) -> list:
-        return [(bbox_xyxy[0] + bbox_xyxy[2]) / 2 - (w / 2), (bbox_xyxy[1] + bbox_xyxy[3]) / 2 - (h / 2)]
+        """Calculates the bounding box position errors among x and y axes 
+
+        Args:
+            bbox_xyxy (tuple[float, float, float, float]): a bounding box RELATIVE (0 ... 1) coordinates in the format xyxy
+            w (float, optional): a horizontal resolution. Defaults to 1.0.
+            h (float, optional): a vertical resolution. Defaults to 1.0.
+
+        Returns:
+            list: x and y errors 
+        """
+        if w > 1 or h > 1:
+            return [round(((bbox_xyxy[0] + bbox_xyxy[2]) / 2) * w) - (w / 2), round(((bbox_xyxy[1] + bbox_xyxy[3]) / 2) * h) - (h / 2)]
+        else:
+            return [(bbox_xyxy[0] + bbox_xyxy[2]) / 2 - (w / 2), (bbox_xyxy[1] + bbox_xyxy[3]) / 2 - (h / 2)]
 
     def visual_pid_wrapper(self, x_bias, y_bias) -> dict:
 
@@ -186,18 +206,17 @@ class AutipilotCompanion:
             'yaw': 0,
             'throttle': 0
         }
-        
+
         pid_velocities = self.__calculate_velocities(
             x_bias, y_bias)
 
         # Dummy calculation for testing
         # velocities['roll'] = -90 * x_bias
         # velocities['yaw'] = -45 * x_bias
-        
+
         velocities['yaw'] = pid_velocities[0]
         velocities['pitch'] = pid_velocities[1]
         velocities['roll'] = pid_velocities[2]
-        
 
         return velocities
 
@@ -216,8 +235,8 @@ class AutipilotCompanion:
             m = self.master.recv_match(
                 type='ATTITUDE',
                 blocking=True,
-                timeout=0.1)
-            
+                timeout=0.02)
+
             if m is None:
                 return
 
@@ -262,9 +281,9 @@ class AutipilotCompanion:
                 self.vertical_fov,
             )
             return (
-                velocity.control_output_x, # yaw
-                velocity.control_output_y, # pitch
-                velocity.control_output_z, # roll
+                velocity.control_output_x,  # yaw
+                velocity.control_output_y,  # pitch
+                velocity.control_output_z,  # roll
             )
         except Exception as er:
             print(f"Error calling shared lib: {er}")

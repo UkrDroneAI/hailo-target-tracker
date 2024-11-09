@@ -188,9 +188,10 @@ class GStreamerDetectionApp(GStreamerApp):
             + QUEUE("queue_hailooverlay")
             + "hailooverlay ! "
             + QUEUE("queue_videoconvert")
-            + "videoconvert n-threads=3 qos=false ! "
-            + QUEUE("queue_hailo_display")
-            + f"fpsdisplaysink video-sink={self.video_sink} name=hailo_display sync={self.sync} text-overlay={self.options_menu.show_fps} signal-fps-measurements=true "
+            # + "videoconvert n-threads=3 qos=false ! videoscale ! video/x-raw,width=3000,height=1600 !"
+            # + QUEUE("queue_hailo_display")
+            # + f"fpsdisplaysink video-sink={self.video_sink} name=hailo_display sync={self.sync} text-overlay={self.options_menu.show_fps} signal-fps-measurements=true "
+            + "videoconvert ! x264enc ! mp4mux ! filesink location=video.mp4"
         )
         print(pipeline_string)
         return pipeline_string

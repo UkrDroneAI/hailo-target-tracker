@@ -99,7 +99,7 @@ class GStreamerDetectionApp(GStreamerApp):
         self.network_height = 640
         self.network_format = "RGB"
         nms_score_threshold = 0.3
-        nms_iou_threshold = 0.45
+        nms_iou_threshold = 0.3
 
         # Temporary code: new postprocess will be merged to TAPPAS.
         # Check if new postprocess so file exists
@@ -188,10 +188,13 @@ class GStreamerDetectionApp(GStreamerApp):
             + QUEUE("queue_hailooverlay")
             + "hailooverlay ! "
             + QUEUE("queue_videoconvert")
-            # + "videoconvert n-threads=3 qos=false ! videoscale ! video/x-raw,width=3000,height=1600 !"
-            # + QUEUE("queue_hailo_display")
-            # + f"fpsdisplaysink video-sink={self.video_sink} name=hailo_display sync={self.sync} text-overlay={self.options_menu.show_fps} signal-fps-measurements=true "
-            + "videoconvert ! x264enc ! mp4mux ! filesink location=video.mp4"
+            + "videoconvert n-threads=3 qos=false ! videoscale ! video/x-raw, width=1280, height=720, pixel-aspect-ratio=1/1 ! "
+            + "tee name=s ! "
+            + QUEUE("queue_hailo_display")
+            # + f"queue leaky=1 ! fpsdisplaysink video-sink={self.video_sink} name=hailo_display text-overlay={self.options_menu.show_fps} signal-fps-measurements=true sync=false s. ! "
+            + f"queue leaky=1 ! fpsdisplaysink video-sink=xvimagesink name=hailo_display text-overlay={self.options_menu.show_fps} signal-fps-measurements=true sync=false s. ! "
+            # + "queue leaky=1 ! xvimagesink0 name=hailo_display sync=false s. ! "
+            + f"queue ! x264enc ! mpegtsmux ! filesink location=/home/udaiadmin/Videos/video-{time.time()}.mp4 "
         )
         print(pipeline_string)
         return pipeline_string
